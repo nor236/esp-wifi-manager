@@ -44,20 +44,20 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     let rng = esp_hal::rng::Rng::new();
-    let mut nvs = esp_hal_wifimanager::NvsWifiHelper::new(peripherals.FLASH);
+    let mut nvs = esp_wifi_manager::NvsWifiHelper::new(peripherals.FLASH);
 
-    let mut wm_settings = esp_hal_wifimanager::WmSettings::default();
+    let mut wm_settings = esp_wifi_manager::WmSettings::default();
 
     wm_settings.ssid.clear();
     _ = core::fmt::write(
         &mut wm_settings.ssid,
-        format_args!("ESP-{:X}", esp_hal_wifimanager::get_efuse_mac()),
+        format_args!("ESP-{:X}", esp_wifi_manager::get_efuse_mac()),
     );
 
     wm_settings.wifi_conn_timeout = 30000;
     wm_settings.esp_reset_timeout = Some(300000); // 5min
 
-    let wifi_res = esp_hal_wifimanager::init_wm(
+    let wifi_res = esp_wifi_manager::init_wm(
         wm_settings,
         &spawner,
         &mut nvs,

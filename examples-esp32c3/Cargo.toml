@@ -6,18 +6,32 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-esp-backtrace = { version = "0.18.1", features = [ "esp32c3", "panic-handler", "println" ] }
-esp-hal = { version = "1.0.0", features = [ "esp32c3", "unstable" ] }
+esp-backtrace = { version = "0.18.1", features = [
+    "esp32c3",
+    "panic-handler",
+    "println",
+] }
+esp-hal = { version = "1.0.0", features = ["esp32c3", "unstable"] }
 esp-println = { version = "0.16.1", features = ["esp32c3", "log-04"] }
 log = { version = "0.4.28" }
-esp-radio = { version = "0.17.0", features = [ "esp32c3", "coex", "esp-alloc" ] }
+esp-radio = { version = "0.17.0", features = ["esp32c3", "coex", "esp-alloc"] }
 esp-rtos = { version = "0.2.0", features = ["esp32c3", "embassy", "esp-radio"] }
 embassy-executor = { version = "0.9.1", features = [] }
-embassy-net = { version = "0.7.1", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "proto-ipv4"] }
+embassy-net = { version = "0.7.1", features = [
+    "tcp",
+    "udp",
+    "dhcpv4",
+    "medium-ethernet",
+    "proto-ipv4",
+] }
 embassy-time = { version = "0.5.0" }
 esp-storage = { version = "0.8.1", features = ["esp32c3"] }
 embedded-storage = "0.3.1"
-esp-hal-wifimanager = { path = "../", default-features = false, features = ["esp32c3", "ble", "ap"] }
+esp-wifi-manager = { path = "../", default-features = false, features = [
+    "esp32c3",
+    "ble",
+    "ap",
+] }
 static_cell = { version = "2.1.1", features = ["nightly"] }
 heapless = { version = "0.9.1", default-features = false }
 esp-alloc = "0.9.0"
@@ -32,7 +46,7 @@ dotenvy = "0.15.7"
 opt-level = "s"
 
 [profile.release]
-codegen-units = 1 # LLVM can perform better optimizations using a single thread
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
 debug = 2
 debug-assertions = false
 incremental = false

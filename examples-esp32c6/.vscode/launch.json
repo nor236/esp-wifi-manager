@@ -1,0 +1,27 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs Test",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": true,
+            "chip": "esp32c3",
+            "probe": "COM30",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": true
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}"
+                }
+            ]
+        }
+    ]
+}

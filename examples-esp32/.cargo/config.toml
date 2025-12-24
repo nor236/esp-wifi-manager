@@ -1,0 +1,19 @@
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor --chip esp32 "
+# runner = "espflash flash --monitor --chip esp32 --log-format defmt"
+# runner = "espflash flash --monitor"
+# runner = "probe-rs run --chip=esp32 --preverify --always-print-stacktrace --no-location --catch-hardfault"
+
+
+[env]
+ESP_LOG = "INFO"
+
+[build]
+# rustflags = ["-C", "link-arg=-nostartfiles"]
+# rustflags = ["-C", "link-arg=-nostartfiles", "-Z", "stack-protector=all"]
+rustflags = ["-C", "link-arg=-nostartfiles", "-Z", "stack-protector=all"]
+target = "xtensa-esp32-none-elf"
+
+
+[unstable]
+build-std = ["alloc", "core"]

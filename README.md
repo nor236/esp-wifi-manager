@@ -1,4 +1,6 @@
-# esp-hal-wifimanager
+# esp-wifi-manager
+forked from [filipton/esp-hal-wifimanager](https://github.com/filipton/esp-hal-wifimanager)
+
 Easy to use Wifimanager for esp-hal (no-std).
 
 If it can't connect to wifi it spawns BLE server (You can use chrome on android or windows to configure it)
@@ -28,7 +30,7 @@ Add this to your Cargo.toml (note also add `embassy`, its only for async):
 NOTE: this section is not updated, will update it sometime near feature.
 ```toml
 [dependencies]
-esp-hal = { version = "1.0.0-rc.0", features = [ "esp32s3", "unstable" ] }
+esp-hal = { version = "1.0.0", features = [ "esp32c3", "unstable" ] }
 esp-wifi = { version = "0.15.0", features = [ "esp32s3", "coex" ] }
 esp-hal-embassy = { version = "0.9.0", features = ["esp32s3"] }
 ```

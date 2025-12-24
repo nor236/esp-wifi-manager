@@ -59,6 +59,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "bt-hci"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,6 +133,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -234,6 +252,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
+ "block-buffer",
  "crypto-common",
 ]
 
@@ -245,12 +264,6 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
-
-[[package]]
-name = "dotenvy"
-version = "0.15.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "edge-dhcp"
@@ -345,6 +358,7 @@ dependencies = [
  "embedded-io-async 0.6.1",
  "embedded-nal-async",
  "heapless 0.8.0",
+ "log",
  "managed",
  "smoltcp",
 ]
@@ -572,6 +586,7 @@ dependencies = [
  "esp-println",
  "heapless 0.9.1",
  "riscv",
+ "semihosting",
  "xtensa-lx",
 ]
 
@@ -646,12 +661,15 @@ dependencies = [
  "esp32s3",
  "fugit",
  "instability",
+ "log",
  "nb 1.1.0",
  "paste",
  "portable-atomic",
  "rand_core 0.6.4",
  "rand_core 0.9.3",
  "riscv",
+ "sha1",
+ "sha2",
  "strum",
  "ufmt-write",
  "xtensa-lx",
@@ -685,37 +703,6 @@ dependencies = [
  "quote",
  "syn 2.0.108",
  "termcolor",
-]
-
-[[package]]
-name = "esp-hal-wifimanager"
-version = "0.2.4"
-dependencies = [
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-sync 0.7.2",
- "embassy-time",
- "embedded-io-async 0.7.0",
- "embedded-storage",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-hal-dhcp-server",
- "esp-nvs",
- "esp-radio",
- "esp-rtos",
- "esp-storage",
- "getrandom",
- "heapless 0.9.1",
- "log",
- "picoserve",
- "portable-atomic",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "static_cell",
- "tickv",
- "trouble-host",
 ]
 
 [[package]]
@@ -795,6 +782,7 @@ dependencies = [
  "num-traits",
  "portable-atomic",
  "portable_atomic_enum",
+ "xtensa-lx-rt",
 ]
 
 [[package]]
@@ -838,12 +826,14 @@ dependencies = [
  "embassy-sync 0.7.2",
  "embassy-time-driver",
  "embassy-time-queue-utils",
+ "esp-alloc",
  "esp-config",
  "esp-hal",
  "esp-hal-procmacros",
  "esp-metadata-generated",
  "esp-radio-rtos-driver",
  "esp-sync",
+ "log",
  "portable-atomic",
 ]
 
@@ -875,6 +865,37 @@ dependencies = [
  "esp-metadata-generated",
  "riscv",
  "xtensa-lx",
+]
+
+[[package]]
+name = "esp-wifi-manager"
+version = "0.3.1"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "embedded-storage",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-hal-dhcp-server",
+ "esp-nvs",
+ "esp-radio",
+ "esp-rtos",
+ "esp-storage",
+ "getrandom",
+ "heapless 0.9.1",
+ "log",
+ "picoserve",
+ "portable-atomic",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "static_cell",
+ "tickv",
+ "trouble-host",
 ]
 
 [[package]]
@@ -1520,6 +1541,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "semihosting"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5669d73a3503b5d34db3359c8c87d1b33ba68b2630c153e340d106c15a8626a7"
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1562,15 +1589,15 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.145"
+version = "1.0.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
+checksum = "6af14725505314343e673e9ecb7cd7e8a36aa9791eb936235a3567cc31447ae4"
 dependencies = [
  "itoa",
  "memchr",
- "ryu",
  "serde",
  "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -1587,6 +1614,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "smoltcp"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,6 +1645,7 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "heapless 0.8.0",
+ "log",
  "managed",
 ]
 
@@ -1908,23 +1958,28 @@ dependencies = [
 name = "wifimanager-example"
 version = "0.1.0"
 dependencies = [
- "dotenvy",
+ "bt-hci",
+ "critical-section",
  "embassy-executor",
  "embassy-net",
  "embassy-time",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "embedded-storage",
  "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
- "esp-hal-wifimanager",
  "esp-println",
  "esp-radio",
  "esp-rtos",
  "esp-storage",
+ "esp-wifi-manager",
  "heapless 0.9.1",
  "log",
+ "smoltcp",
  "static_cell",
+ "trouble-host",
 ]
 
 [[package]]
@@ -2010,3 +2065,9 @@ dependencies = [
  "quote",
  "syn 2.0.108",
 ]
+
+[[package]]
+name = "zmij"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e404bcd8afdaf006e529269d3e85a743f9480c3cef60034d77860d02964f3ba"

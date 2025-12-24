@@ -1,0 +1,14 @@
+[target.xtensa-esp32s3-none-elf]
+# runner = "espflash flash --monitor"
+# runner = "espflash flash --monitor --chip esp32s3 --log-format defmt"
+runner = "espflash flash --monitor --chip esp32s3 "
+[env]
+ESP_LOG = "INFO"
+# C:\Users\hy\export-esp.ps1
+
+[build]
+rustflags = ["-C", "link-arg=-nostartfiles"]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]
