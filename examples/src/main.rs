@@ -34,20 +34,24 @@ async fn main(spawner: Spawner) {
     */
 
     esp_println::logger::init_logger_from_env();
-    log::set_max_level(log::LevelFilter::Info);
+
+    // let timg0 = TimerGroup::new(peripherals.TIMG0);
+    // esp_rtos::start(timg0.timer0, timg0.timer1);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
+    let sw_int =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     let rng = esp_hal::rng::Rng::new();
-    let nvs = esp_hal_wifimanager::Nvs::new(0x9000, 0x6000, peripherals.FLASH).unwrap();
+    let mut nvs = esp_hal_wifimanager::NvsWifiHelper::new(peripherals.FLASH);
 
     let mut wm_settings = esp_hal_wifimanager::WmSettings::default();
 
     wm_settings.ssid.clear();
     _ = core::fmt::write(
         &mut wm_settings.ssid,
-        format_args!("TEST-{:X}", esp_hal_wifimanager::get_efuse_mac()),
+        format_args!("ESP-{:X}", esp_hal_wifimanager::get_efuse_mac()),
     );
 
     wm_settings.wifi_conn_timeout = 30000;
@@ -56,7 +60,7 @@ async fn main(spawner: Spawner) {
     let wifi_res = esp_hal_wifimanager::init_wm(
         wm_settings,
         &spawner,
-        Some(&nvs),
+        &mut nvs,
         rng.clone(),
         peripherals.WIFI,
         peripherals.BT,

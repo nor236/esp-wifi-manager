@@ -1,277 +1,132 @@
-use alloc::rc::Rc;
+use core::f32::consts::E;
+
+use alloc::{rc::Rc, string::String};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::Mutex,
     semaphore::{GreedySemaphore, Semaphore},
 };
+use embedded_storage::nor_flash::NorFlash as _;
 use embedded_storage::{ReadStorage, Storage};
+use esp_bootloader_esp_idf::partitions;
+use esp_nvs::{error::Error, platform::EspFlash, Key};
+use esp_storage::FlashStorage;
 use portable_atomic::AtomicU8;
 use tickv::{ErrorCode, FlashController};
 
+use crate::{structs::AutoSetupSettings, WmError};
 const PART_OFFSET: u32 = 0x8000;
 const PART_SIZE: u32 = 0xc00;
 
 static mut NVS_READ_BUF: &mut [u8; 1024] = &mut [0; 1024];
 static NVS_INSTANCES: AtomicU8 = AtomicU8::new(0);
-
-pub struct Nvs {
-    flash_peripheral: esp_hal::peripherals::FLASH<'static>,
-    tickv: Rc<tickv::TicKV<'static, NvsFlash, 1024>>,
-    semaphore: Rc<GreedySemaphore<CriticalSectionRawMutex>>,
-
-    offset: usize,
-    size: usize,
+pub const NAMESPACE_WIFI: &str = "WIFI";
+pub const KEY_SSID: &str = "SSID";
+pub const KEY_PASSWORD: &str = "PASSWORD";
+pub struct NvsWifiHelper {
+    nvs: esp_nvs::Nvs<'static, EspFlash<'static>>,
+    nvs_partition: partitions::FlashRegion<'static, FlashStorage<'static>>,
 }
 
-impl Nvs {
-    pub fn new(
-        flash_offset: usize,
-        flash_size: usize,
-        flash: esp_hal::peripherals::FLASH<'static>,
-    ) -> crate::Result<Self> {
-        if NVS_INSTANCES.load(core::sync::atomic::Ordering::Relaxed) > 0 {
-            log::error!("Cannot spawn new NVS struct, clone original one instead!");
-            return Err(crate::WmError::NvsError);
-        }
+impl NvsWifiHelper {
+    pub fn new(flash_per: esp_hal::peripherals::FLASH<'static>) -> Self {
+        use static_cell::StaticCell;
+        static SOME_FLASH: StaticCell<FlashStorage<'static>> = StaticCell::new();
 
-        NVS_INSTANCES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        unsafe { Self::new_unchecked(flash_offset, flash_size, flash) }
+        let flash = esp_storage::FlashStorage::new(unsafe { flash_per.clone_unchecked() });
+        // // Initialize it at runtime. This returns a `&'static mut`.
+        let flash: &'static mut FlashStorage<'static> = SOME_FLASH.init(flash);
+
+        static SOME_PT_MEM: StaticCell<[u8; partitions::PARTITION_TABLE_MAX_LEN]> =
+            StaticCell::new();
+
+        let pt_mem = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+        let pt_mem = SOME_PT_MEM.init(pt_mem);
+
+        let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
+
+        let nvs = pt
+            .find_partition(partitions::PartitionType::Data(
+                partitions::DataPartitionSubType::Nvs,
+            ))
+            .unwrap()
+            .unwrap();
+        let nvs_partition: partitions::FlashRegion<'_, FlashStorage<'_>> =
+            nvs.as_embedded_storage(flash);
+
+        let partition_offset = nvs.offset() as usize;
+        let partition_size = nvs.len() as usize;
+        let storage = esp_storage::FlashStorage::new(unsafe { flash_per.clone_unchecked() });
+        static SOME_ESP_FLASH: StaticCell<EspFlash<'static>> = StaticCell::new();
+        let esp_flash = EspFlash::new(storage);
+        let esp_flash = SOME_ESP_FLASH.init(esp_flash);
+
+        let nvs: esp_nvs::Nvs<'_, EspFlash<'_>> =
+            esp_nvs::Nvs::new(partition_offset, partition_size, esp_flash)
+                .expect("failed to create nvs");
+        Self { nvs, nvs_partition }
+
+        // unsafe { Self::new_unchecked(flash_offset, flash_size, flash) }
     }
 
-    /// # Safety
-    ///
-    /// This is not checking if other nvs instance already exists (there should be only one nvs
-    /// instancce!)
-    pub unsafe fn new_unchecked(
-        flash_offset: usize,
-        flash_size: usize,
-        flash: esp_hal::peripherals::FLASH<'static>,
-    ) -> crate::Result<Self> {
-        let nvs = tickv::TicKV::<NvsFlash, 1024>::new(
-            NvsFlash::new(flash_offset, unsafe { flash.clone_unchecked() }),
-            unsafe { NVS_READ_BUF },
-            flash_size,
-        );
-        nvs.initialise(hash(tickv::MAIN_KEY))?;
-
-        Ok(Nvs {
-            flash_peripheral: flash,
-            tickv: Rc::new(nvs),
-            semaphore: Rc::new(GreedySemaphore::new(1)),
-
-            offset: flash_offset,
-            size: flash_size,
-        })
-    }
-
-    pub fn new_from_part_table(flash: esp_hal::peripherals::FLASH<'static>) -> crate::Result<Self> {
-        if let Some((offset, size)) =
-            Self::read_nvs_partition_offset(unsafe { flash.clone_unchecked() })
-        {
-            Self::new(offset, size, flash)
-        } else {
-            log::error!("Nvs partition not found!");
-            Err(crate::WmError::Other)
-        }
-    }
-
-    pub fn read_nvs_partition_offset(
-        flash: esp_hal::peripherals::FLASH<'static>,
-    ) -> Option<(usize, usize)> {
-        let mut flash = esp_storage::FlashStorage::new(flash);
-
-        let mut nvs_part = None;
-        let mut bytes = [0xFF; 32];
-        for read_offset in (0..PART_SIZE).step_by(32) {
-            _ = flash.read(PART_OFFSET + read_offset, &mut bytes);
-            if bytes == [0xFF; 32] {
-                break;
+    pub fn clear(&mut self) {
+        match self.nvs_partition.erase(0, 1024) {
+            Ok(_) => {
+                log::info!("nvs partition erased");
             }
-
-            let magic = &bytes[0..2];
-            if magic != [0xAA, 0x50] {
-                continue;
-            }
-
-            let p_type = &bytes[2];
-            let p_subtype = &bytes[3];
-            let p_offset = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-            let p_size = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-            //let p_name = core::str::from_utf8(&bytes[12..28]).unwrap();
-            //let p_flags = u32::from_le_bytes(bytes[28..32].try_into().unwrap());
-            //log::info!("{magic:?} {p_type} {p_subtype} {p_offset} {p_size} {p_name} {p_flags}");
-
-            if *p_type == 1 && *p_subtype == 2 {
-                nvs_part = Some((p_offset, p_size));
-                break;
+            Err(e) => {
+                log::error!("nvs partition erase failed: {e}");
             }
         }
-
-        nvs_part.map(|(offset, size)| (offset as usize, size as usize))
     }
-
-    pub async fn get_key(&self, key: &[u8], buf: &mut [u8]) -> crate::Result<()> {
-        let _drop = self.semaphore.acquire(1).await.unwrap();
-        self.tickv.get_key(hash(key), buf)?;
-        Ok(())
+    pub fn delete(&mut self, namespace: &str, key: &str) -> crate::Result<()> {
+        self.nvs
+            .delete(&Key::from_str(namespace), &Key::from_str(key))
+            .map_err(|_| crate::WmError::NvsError)
     }
-
-    pub async fn append_key(&self, key: &[u8], buf: &[u8]) -> crate::Result<()> {
-        let _drop = self.semaphore.acquire(1).await.unwrap();
-        let res = self.tickv.append_key(hash(key), buf);
-        if let Err(e) = res {
-            if e == ErrorCode::UnsupportedVersion {
-                log::error!(
-                    "Unsupported version while appending flash key... Wiping NVS partition!"
-                );
-
-                let mut flash = esp_storage::FlashStorage::new(unsafe {
-                    self.flash_peripheral.clone_unchecked()
-                });
-                let mut written = 0;
-
-                while written < self.size {
-                    let chunk = [0; 1024];
-                    let chunk_size = (self.size - written).min(1024);
-
-                    _ = flash.write((self.offset + written) as u32, &chunk[..chunk_size]);
-                    written += chunk_size;
-                }
-
-                self.tickv.initialise(hash(tickv::MAIN_KEY))?;
-                self.tickv.append_key(hash(key), buf)?;
-            }
-        }
-
-        Ok(())
+    pub fn set_str(&mut self, namespace: &str, key: &str, value: &str) -> crate::Result<()> {
+        self.nvs
+            .set(&Key::from_str(namespace), &Key::from_str(key), value)
+            .map_err(|_| crate::WmError::NvsError)
     }
-
-    pub async fn invalidate_key(&self, key: &[u8]) -> crate::Result<()> {
-        let _drop = self.semaphore.acquire(1).await.unwrap();
-        self.tickv.invalidate_key(hash(key))?;
-        Ok(())
+    pub fn set_bool(&mut self, namespace: &str, key: &str, value: bool) -> crate::Result<()> {
+        self.nvs
+            .set(&Key::from_str(namespace), &Key::from_str(key), value)
+            .map_err(|_| crate::WmError::NvsError)
     }
-
-    /// # Safety
-    ///
-    /// This doesn't check for semaphore!
-    pub unsafe fn get_key_unchecked(&self, key: &[u8], buf: &mut [u8]) -> crate::Result<()> {
-        self.tickv.get_key(hash(key), buf)?;
-        Ok(())
+    pub fn set_i32(&mut self, namespace: &str, key: &str, value: i32) -> crate::Result<()> {
+        self.nvs
+            .set(&Key::from_str(namespace), &Key::from_str(key), value)
+            .map_err(|_| crate::WmError::NvsError)
     }
-
-    /// # Safety
-    ///
-    /// This doesn't check for semaphore!
-    pub unsafe fn append_key_unckeched(&self, key: &[u8], buf: &[u8]) -> crate::Result<()> {
-        let res = self.tickv.append_key(hash(key), buf);
-        if let Err(e) = res {
-            if e == ErrorCode::UnsupportedVersion {
-                log::error!(
-                    "Unsupported version while appending flash key... Wiping NVS partition!"
-                );
-
-                let mut flash = esp_storage::FlashStorage::new(unsafe {
-                    self.flash_peripheral.clone_unchecked()
-                });
-                let mut written = 0;
-
-                while written < self.size {
-                    let chunk = [0; 1024];
-                    let chunk_size = (self.size - written).min(1024);
-
-                    _ = flash.write((self.offset + written) as u32, &chunk[..chunk_size]);
-                    written += chunk_size;
-                }
-
-                self.tickv.initialise(hash(tickv::MAIN_KEY))?;
-                self.tickv.append_key(hash(key), buf)?;
-            }
-        }
-
-        Ok(())
+    pub fn set_u32(&mut self, namespace: &str, key: &str, value: u32) -> crate::Result<()> {
+        self.nvs
+            .set(&Key::from_str(namespace), &Key::from_str(key), value)
+            .map_err(|_| crate::WmError::NvsError)
     }
-
-    /// # Safety
-    ///
-    /// This doesn't check for semaphore!
-    pub unsafe fn invalidate_key_unchecked(&self, key: &[u8]) -> crate::Result<()> {
-        self.tickv.invalidate_key(hash(key))?;
-        Ok(())
+    pub fn get_str(&mut self, namespace: &str, key: &str) -> Result<String, Error> {
+        let rs = self
+            .nvs
+            .get::<String>(&Key::from_str(namespace), &Key::from_str(key))?;
+        Ok(rs)
     }
-}
-
-impl Drop for Nvs {
-    fn drop(&mut self) {
-        NVS_INSTANCES.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+    pub fn get_bool(&mut self, namespace: &str, key: &str) -> Result<bool, Error> {
+        let rs = self
+            .nvs
+            .get::<bool>(&Key::from_str(namespace), &Key::from_str(key))?;
+        Ok(rs)
     }
-}
-
-impl Clone for Nvs {
-    fn clone(&self) -> Self {
-        NVS_INSTANCES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-        Self {
-            flash_peripheral: unsafe { self.flash_peripheral.clone_unchecked() },
-            tickv: self.tickv.clone(),
-            semaphore: self.semaphore.clone(),
-            offset: self.offset,
-            size: self.size,
-        }
+    pub fn get_i32(&mut self, namespace: &str, key: &str) -> Result<i32, Error> {
+        let rs = self
+            .nvs
+            .get::<i32>(&Key::from_str(namespace), &Key::from_str(key))?;
+        Ok(rs)
     }
-}
-
-pub struct NvsFlash {
-    flash_offset: u32,
-    flash: Mutex<CriticalSectionRawMutex, esp_storage::FlashStorage<'static>>,
-}
-
-impl NvsFlash {
-    pub fn new(flash_offset: usize, flash: esp_hal::peripherals::FLASH<'static>) -> Self {
-        Self {
-            flash_offset: flash_offset as u32,
-            flash: Mutex::new(esp_storage::FlashStorage::new(flash)),
-        }
-    }
-}
-
-impl FlashController<1024> for NvsFlash {
-    fn read_region(
-        &self,
-        region_number: usize,
-        buf: &mut [u8; 1024],
-    ) -> Result<(), tickv::ErrorCode> {
-        if let Ok(mut flash) = self.flash.try_lock() {
-            let offset = region_number * 1024;
-            flash
-                .read(self.flash_offset + offset as u32, buf)
-                .map_err(|_| tickv::ErrorCode::ReadFail)
-        } else {
-            Err(tickv::ErrorCode::ReadFail)
-        }
-    }
-
-    fn write(&self, address: usize, buf: &[u8]) -> Result<(), tickv::ErrorCode> {
-        if let Ok(mut flash) = self.flash.try_lock() {
-            flash
-                .write(self.flash_offset + address as u32, buf)
-                .map_err(|_| tickv::ErrorCode::WriteFail)
-        } else {
-            Err(tickv::ErrorCode::WriteFail)
-        }
-    }
-
-    fn erase_region(&self, region_number: usize) -> Result<(), tickv::ErrorCode> {
-        if let Ok(mut flash) = self.flash.try_lock() {
-            flash
-                .write(
-                    self.flash_offset + (region_number as u32 * 1024),
-                    &[0xFF; 1024],
-                )
-                .map_err(|_| tickv::ErrorCode::EraseFail)
-        } else {
-            Err(tickv::ErrorCode::EraseFail)
-        }
+    pub fn get_u32(&mut self, namespace: &str, key: &str) -> Result<u32, Error> {
+        let rs = self
+            .nvs
+            .get::<u32>(&Key::from_str(namespace), &Key::from_str(key))?;
+        Ok(rs)
     }
 }
 
@@ -283,4 +138,44 @@ pub fn hash(buf: &[u8]) -> u64 {
     }
 
     tmp
+}
+
+pub fn create_nvs(
+    flash_per: esp_hal::peripherals::FLASH<'static>,
+) -> esp_nvs::Nvs<'static, EspFlash<'static>> {
+    use static_cell::StaticCell;
+    static SOME_FLASH: StaticCell<FlashStorage<'static>> = StaticCell::new();
+
+    let flash = esp_storage::FlashStorage::new(unsafe { flash_per.clone_unchecked() });
+    // // Initialize it at runtime. This returns a `&'static mut`.
+    let flash: &'static mut FlashStorage<'static> = SOME_FLASH.init(flash);
+
+    static SOME_PT_MEM: StaticCell<[u8; partitions::PARTITION_TABLE_MAX_LEN]> = StaticCell::new();
+
+    let pt_mem = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+    let pt_mem = SOME_PT_MEM.init(pt_mem);
+
+    let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
+
+    let nvs = pt
+        .find_partition(partitions::PartitionType::Data(
+            partitions::DataPartitionSubType::Nvs,
+        ))
+        .unwrap()
+        .unwrap();
+    let nvs_partition: partitions::FlashRegion<'_, FlashStorage<'_>> =
+        nvs.as_embedded_storage(flash);
+
+    let partition_offset = nvs.offset() as usize;
+    let partition_size = nvs.len() as usize;
+    let storage = esp_storage::FlashStorage::new(unsafe { flash_per.clone_unchecked() });
+    static SOME_ESP_FLASH: StaticCell<EspFlash<'static>> = StaticCell::new();
+    let esp_flash = EspFlash::new(storage);
+    let esp_flash = SOME_ESP_FLASH.init(esp_flash);
+
+    let nvs: esp_nvs::Nvs<'_, EspFlash<'_>> =
+        esp_nvs::Nvs::new(partition_offset, partition_size, esp_flash)
+            .expect("failed to create nvs");
+    nvs
+    // unsafe { Self::new_unchecked(flash_offset, flash_size, flash) }
 }

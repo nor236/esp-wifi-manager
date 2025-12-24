@@ -5,8 +5,8 @@ use embassy_net::Stack;
 use embassy_time::Duration;
 use picoserve::{
     extract::{FromRequest, State},
-    routing::{get, get_service, post},
-    AppRouter, AppWithStateBuilder,
+    routing::{get, get_service, post, PathRouter},
+    serve_with_state, AppRouter, AppWithStateBuilder, Config, Router,
 };
 
 const WEB_TASK_POOL_SIZE: usize = 2;
@@ -71,7 +71,7 @@ impl AppWithStateBuilder for AppProps {
 }
 
 #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
-async fn web_task(
+async fn  web_task(
     id: usize,
     stack: embassy_net::Stack<'static>,
     app: &'static AppRouter<AppProps>,

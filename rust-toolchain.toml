@@ -1,2 +1,8 @@
+# [toolchain]
+# channel = "esp"
+
+
 [toolchain]
-channel = "esp"
+channel = "nightly"
+components = ["rust-src"]
+targets = ["riscv32imc-unknown-none-elf"]

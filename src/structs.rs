@@ -103,9 +103,16 @@ pub struct WmSettings {
 pub(crate) struct AutoSetupSettings {
     pub ssid: String,
     pub psk: String,
-    pub data: Option<serde_json::Value>,
+    // pub data: Option<serde_json::Value>,
 }
-
+impl Default for AutoSetupSettings {
+    fn default() -> Self {
+        Self {
+            ssid: String::new(),
+            psk: String::new(),
+        }
+    }
+}
 impl AutoSetupSettings {
     pub fn to_configuration(&self) -> Result<ModeConfig> {
         Ok(ModeConfig::Client(self.to_client_conf()?))
@@ -140,9 +147,9 @@ impl Default for WmSettings {
 pub struct WmReturn {
     pub wifi_init: &'static Controller<'static>,
     pub sta_stack: Stack<'static>,
-    pub data: Option<serde_json::Value>,
     pub ip_address: [u8; 4],
-
+    pub ssid: String,
+    pub password: String,
     pub(crate) stop_signal: Rc<Signal<CriticalSectionRawMutex, bool>>,
 }
 
@@ -163,7 +170,8 @@ impl ::core::fmt::Debug for WmReturn {
     #[inline]
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         f.debug_struct("WmReturn")
-            .field("data", &self.data)
+            .field("ssid", &self.ssid)
+            .field("password", &self.password)
             .field("ip_address", &self.ip_address)
             .finish()
     }

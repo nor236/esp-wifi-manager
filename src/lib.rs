@@ -9,6 +9,7 @@ compile_error!("ESP32-S2 doesnt support BLE!");
 
 extern crate alloc;
 use alloc::rc::Rc;
+use alloc::string::String;
 use core::ops::DerefMut;
 use embassy_executor::Spawner;
 use embassy_net::{Config, Runner, StackResources};
@@ -22,7 +23,7 @@ use esp_radio::{
 };
 use structs::{AutoSetupSettings, Result, WmInnerSignals, WmReturn};
 
-pub use nvs::Nvs;
+pub use nvs::NvsWifiHelper;
 pub use structs::{WmError, WmSettings};
 pub use utils::get_efuse_mac;
 
@@ -39,7 +40,9 @@ mod nvs;
 mod structs;
 mod utils;
 
-pub const WIFI_NVS_KEY: &[u8] = b"WIFI_SETUP";
+pub const NAMESPACE_WIFI: &str = "WIFI";
+pub const KEY_SSID: &str = "SSID";
+pub const KEY_PASSWORD: &str = "PASSWORD";
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -54,7 +57,7 @@ macro_rules! mk_static {
 pub async fn init_wm(
     settings: WmSettings,
     spawner: &Spawner,
-    nvs: Option<&Nvs>,
+    nvs: &mut NvsWifiHelper,
     mut rng: Rng,
     wifi: WIFI<'static>,
     #[cfg(feature = "ble")] bt: esp_hal::peripherals::BT<'static>,
@@ -65,43 +68,25 @@ pub async fn init_wm(
     let init = &*mk_static!(Controller<'static>, esp_radio::init()?);
     let (mut controller, interfaces) = esp_radio::wifi::new(init, wifi, Default::default())?;
     controller.set_power_saving(esp_radio::wifi::PowerSaveMode::None)?;
-
-    let mut wifi_setup = [0; 1024];
-    let wifi_setup = if let Some(nvs) = nvs {
-        match nvs.get_key(WIFI_NVS_KEY, &mut wifi_setup).await {
-            Ok(_) => {
-                let end_pos = wifi_setup
-                    .iter()
-                    .position(|&x| x == 0x00)
-                    .unwrap_or(wifi_setup.len());
-
-                Some(serde_json::from_slice::<AutoSetupSettings>(
-                    &wifi_setup[..end_pos],
-                )?)
-            }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    //调试
+    // clear_wifi(nvs)?;
+    let wifi_setup = get_wifi_settings(nvs);
 
     let mut wifi_connected = false;
     let mut controller_started = false;
+    //nvs中存在wifi ssid和密码，直接开始连接wifi
     if let Some(ref wifi_setup) = wifi_setup {
-        log::debug!("Read wifi_setup from flash: {wifi_setup:?}");
-        controller.set_config(&wifi_setup.to_configuration()?)?;
+        let client_config = wifi_setup.to_client_conf()?;
+        log::info!("Connecting to wifi: {wifi_setup:?}");
+        controller.set_config(&esp_radio::wifi::ModeConfig::Client(client_config))?;
         controller.start_async().await?;
         controller_started = true;
 
         wifi_connected =
             utils::try_to_wifi_connect(&mut controller, settings.wifi_conn_timeout).await;
     }
-
-    let data = if wifi_connected {
-        wifi_setup
-            .expect("Shouldnt fail if connected i guesss.")
-            .data
-    } else {
+    //连接失败或者nvs中不存在wifi ssid和密码，开始启动ap和httpserver
+    if !wifi_connected {
         log::info!("Starting wifimanager with ssid: {generated_ssid}");
 
         let wm_signals = Rc::new(WmInnerSignals::new());
@@ -162,8 +147,6 @@ pub async fn init_wm(
             Timer::after_millis(1000).await;
             esp_hal::system::software_reset();
         }
-
-        wifi_setup.data
     };
 
     let sta_config = Config::dhcpv4(Default::default());
@@ -185,21 +168,55 @@ pub async fn init_wm(
         stop_signal.clone(),
     ))?;
     spawner.spawn(sta_task(runner))?;
+    let (ssid, password) = if let Some(ref wifi_setup) = wifi_setup {
+        (wifi_setup.ssid.clone(), wifi_setup.psk.clone())
+    } else {
+        (String::new(), String::new())
+    };
 
     Ok(WmReturn {
         wifi_init: init,
         sta_stack,
-        data,
         ip_address: utils::wifi_wait_for_ip(&sta_stack).await,
-
+        ssid,
+        password,
         stop_signal,
     })
 }
 
+fn get_wifi_settings(nvs: &mut NvsWifiHelper) -> Option<AutoSetupSettings> {
+    let ssid = if let Ok(ssid) = nvs.get_str(NAMESPACE_WIFI, KEY_SSID) {
+        ssid
+    } else {
+        String::new()
+    };
+    let password = if let Ok(password) = nvs.get_str(NAMESPACE_WIFI, KEY_PASSWORD) {
+        password
+    } else {
+        String::new()
+    };
+    let wifi_setup = if ssid.is_empty() || password.is_empty() {
+        log::info!("No wifi_setup found in flash");
+        None
+    } else {
+        log::info!("Read wifi_setup from flash:ssid= {ssid:?}, password= {password:?}");
+        Some(AutoSetupSettings {
+            ssid,
+            psk: password,
+        })
+    };
+    wifi_setup
+}
+
+pub fn clear_wifi(nvs: &mut NvsWifiHelper) -> core::result::Result<(), WmError> {
+    nvs.delete(NAMESPACE_WIFI, KEY_SSID)?;
+    nvs.delete(NAMESPACE_WIFI, KEY_PASSWORD)?;
+    Ok(())
+}
 async fn wifi_connection_worker(
     settings: WmSettings,
     wm_signals: Rc<WmInnerSignals>,
-    nvs: Option<&Nvs>,
+    nvs: &mut NvsWifiHelper,
     controller: &mut WifiController<'static>,
     mut configuration: esp_radio::wifi::ModeConfig,
 ) -> Result<AutoSetupSettings> {
@@ -208,9 +225,9 @@ async fn wifi_connection_worker(
     loop {
         if wm_signals.wifi_conn_info_sig.signaled() {
             let setup_info_buf = wm_signals.wifi_conn_info_sig.wait().await;
-            let setup_info: AutoSetupSettings = serde_json::from_slice(&setup_info_buf)?;
 
-            log::debug!("trying to connect to: {setup_info:?}");
+            let setup_info: AutoSetupSettings = serde_json::from_slice(&setup_info_buf)?;
+            log::info!("recived http post,trying to connect to: {setup_info:?}");
             #[cfg(feature = "ap")]
             {
                 let esp_radio::wifi::ModeConfig::ApSta(ref mut client_conf, _) = configuration
@@ -238,15 +255,16 @@ async fn wifi_connection_worker(
             wm_signals.wifi_conn_res_sig.signal(wifi_connected);
 
             if wifi_connected {
-                if let Some(nvs) = nvs {
-                    _ = nvs.invalidate_key(WIFI_NVS_KEY).await;
-                    nvs.append_key(WIFI_NVS_KEY, &setup_info_buf).await?;
-                }
+                log::info!("Wifi connected to: {setup_info:?}");
+                nvs.set_str(NAMESPACE_WIFI, KEY_SSID, setup_info.ssid.as_str())?;
+                nvs.set_str(NAMESPACE_WIFI, KEY_PASSWORD, setup_info.psk.as_str())?;
+                log::info!("Wifi password saved to nvs");
 
                 #[cfg(feature = "ap")]
                 esp_hal_dhcp_server::dhcp_close();
 
                 Timer::after_millis(1000).await;
+
                 wm_signals.signal_end();
                 return Ok(setup_info);
             }
