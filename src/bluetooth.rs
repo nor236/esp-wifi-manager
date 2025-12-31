@@ -1,4 +1,7 @@
-use crate::structs::WmInnerSignals;
+use crate::{
+    http_server::parse_form_data,
+    structs::{AutoSetupSettings, WmInnerSignals},
+};
 use alloc::{rc::Rc, string::String};
 use core::str::FromStr;
 use embassy_futures::select::Either::{First, Second};
@@ -174,12 +177,10 @@ async fn custom_task<C: Controller, P: PacketPool>(
         let setup = setup_string.get(server);
         if let Ok(setup) = setup {
             if setup.ends_with('\0') {
-                let bytes = setup.as_bytes();
-
+                let (ssid, pwd) = parse_form_data(setup.as_str());
                 signals
                     .wifi_conn_info_sig
-                    .signal(bytes[..bytes.len() - 1].to_vec());
-
+                    .signal(AutoSetupSettings { ssid, psk: pwd });
                 _ = setup_string.set(server, &heapless::String::new());
             }
         }

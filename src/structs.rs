@@ -12,7 +12,6 @@ use esp_radio::{
     wifi::{ClientConfig, ModeConfig, WifiError},
     Controller, InitializationError,
 };
-use serde::{Deserialize, Serialize};
 
 pub type Result<T> = core::result::Result<T, WmError>;
 
@@ -22,12 +21,10 @@ pub enum WmError {
     WmTimeout,
 
     WifiControllerStartError,
-    FlashError(tickv::ErrorCode),
     WifiError(WifiError),
     WifiInitalizationError(InitializationError),
-    SerdeError(serde_json::Error),
     TaskSpawnError,
-    NvsError,
+    NvsError(esp_nvs::error::Error),
 
     Other,
 }
@@ -50,18 +47,6 @@ impl From<SpawnError> for WmError {
     }
 }
 
-impl From<tickv::ErrorCode> for WmError {
-    fn from(value: tickv::ErrorCode) -> Self {
-        Self::FlashError(value)
-    }
-}
-
-impl From<serde_json::Error> for WmError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::SerdeError(value)
-    }
-}
-
 impl From<()> for WmError {
     fn from(_value: ()) -> Self {
         Self::Other
@@ -79,10 +64,6 @@ pub struct WmSettings {
     /// SSID and ble name
     pub ssid: String,
 
-    /// Panel hosted on AP (html)
-    /// TODO: Make this as dictionary so, you will be able to upload more files
-    pub wifi_panel: &'static str,
-
     /// Max time WiFi will try to connect (in ms)
     pub wifi_conn_timeout: u64,
 
@@ -97,13 +78,14 @@ pub struct WmSettings {
 
     /// Indicates if esp should restart after succesfull first connection
     pub esp_restart_after_connection: bool,
+
+    pub gw_ip_addr_str: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct AutoSetupSettings {
     pub ssid: String,
     pub psk: String,
-    // pub data: Option<serde_json::Value>,
 }
 impl Default for AutoSetupSettings {
     fn default() -> Self {
@@ -132,14 +114,12 @@ impl Default for WmSettings {
     fn default() -> Self {
         Self {
             ssid: alloc::format!("ESP-{:X}", get_efuse_mac()),
-            wifi_panel: include_str!("./panel.html"),
-
             wifi_reconnect_time: 1000,
             wifi_conn_timeout: 15000,
             wifi_scan_interval: 15000,
-
-            esp_reset_timeout: None,
-            esp_restart_after_connection: false,
+            esp_reset_timeout: Some(5000),
+            esp_restart_after_connection: true,
+            gw_ip_addr_str: "192.168.4.1".into(),
         }
     }
 }
@@ -179,9 +159,9 @@ impl ::core::fmt::Debug for WmReturn {
 
 pub struct WmInnerSignals {
     pub wifi_scan_res: Mutex<NoopRawMutex, alloc::string::String>,
-
+    pub gw_ip_addr_str: Mutex<NoopRawMutex, alloc::string::String>,
     /// This is used to tell main task to connect to wifi
-    pub wifi_conn_info_sig: Signal<NoopRawMutex, alloc::vec::Vec<u8>>,
+    pub wifi_conn_info_sig: Signal<NoopRawMutex, AutoSetupSettings>,
 
     /// This is used to tell ble task about conn result (return signal)
     pub wifi_conn_res_sig: Signal<NoopRawMutex, bool>,
@@ -193,6 +173,7 @@ impl WmInnerSignals {
     pub fn new() -> Self {
         Self {
             wifi_scan_res: Mutex::new(alloc::string::String::new()),
+            gw_ip_addr_str: Mutex::new(alloc::string::String::new()),
             wifi_conn_info_sig: Signal::new(),
             wifi_conn_res_sig: Signal::new(),
             end_signal_pubsub: PubSubChannel::new(),

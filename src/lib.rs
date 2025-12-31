@@ -17,13 +17,14 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{peripherals::WIFI, rng::Rng};
+use esp_nvs::platform::EspFlash;
+use esp_nvs::Key;
 use esp_radio::{
     wifi::{WifiController, WifiDevice, WifiEvent, WifiStaState},
     Controller,
 };
 use structs::{AutoSetupSettings, Result, WmInnerSignals, WmReturn};
 
-pub use nvs::NvsWifiHelper;
 pub use structs::{WmError, WmSettings};
 pub use utils::get_efuse_mac;
 
@@ -35,14 +36,13 @@ mod ap;
 
 #[cfg(feature = "ble")]
 mod bluetooth;
-
-mod nvs;
+mod http_server;
+pub mod nvs;
 mod structs;
 mod utils;
-
-pub const NAMESPACE_WIFI: &str = "WIFI";
-pub const KEY_SSID: &str = "SSID";
-pub const KEY_PASSWORD: &str = "PASSWORD";
+pub const NAMESPACE_WIFI: &Key = &Key::from_str("WIFI");
+pub const KEY_SSID: &Key = &Key::from_str("SSID");
+pub const KEY_PASSWORD: &Key = &Key::from_str("PASSWORD");
 
 macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
@@ -53,11 +53,39 @@ macro_rules! mk_static {
     }};
 }
 
+pub async fn start_wifi(
+    spawner: &Spawner,
+    nvs: &mut esp_nvs::Nvs<'static, EspFlash<'static>>,
+    wifi: WIFI<'static>,
+    #[cfg(feature = "ble")] bt: esp_hal::peripherals::BT<'static>,
+) -> Result<WmReturn> {
+    let mut wm_settings = WmSettings::default();
+    wm_settings.ssid.clear();
+    _ = core::fmt::write(
+        &mut wm_settings.ssid,
+        format_args!("ESP-{:X}", get_efuse_mac()),
+    );
+    wm_settings.wifi_conn_timeout = 30000;
+    wm_settings.esp_reset_timeout = Some(300000); // 5min
+    let rng = esp_hal::rng::Rng::new();
+    let wifi_res = init_wm(
+        wm_settings,
+        &spawner,
+        nvs,
+        rng.clone(),
+        wifi,
+        #[cfg(feature = "ble")]
+        bt,
+        None,
+    )
+    .await?;
+    Ok(wifi_res)
+}
 #[allow(clippy::too_many_arguments)]
 pub async fn init_wm(
     settings: WmSettings,
     spawner: &Spawner,
-    nvs: &mut NvsWifiHelper,
+    nvs: &mut esp_nvs::Nvs<'static, EspFlash<'static>>,
     mut rng: Rng,
     wifi: WIFI<'static>,
     #[cfg(feature = "ble")] bt: esp_hal::peripherals::BT<'static>,
@@ -184,13 +212,15 @@ pub async fn init_wm(
     })
 }
 
-fn get_wifi_settings(nvs: &mut NvsWifiHelper) -> Option<AutoSetupSettings> {
-    let ssid = if let Ok(ssid) = nvs.get_str(NAMESPACE_WIFI, KEY_SSID) {
+fn get_wifi_settings(
+    nvs: &mut esp_nvs::Nvs<'static, EspFlash<'static>>,
+) -> Option<AutoSetupSettings> {
+    let ssid = if let Ok(ssid) = nvs.get(NAMESPACE_WIFI, KEY_SSID) {
         ssid
     } else {
         String::new()
     };
-    let password = if let Ok(password) = nvs.get_str(NAMESPACE_WIFI, KEY_PASSWORD) {
+    let password = if let Ok(password) = nvs.get(NAMESPACE_WIFI, KEY_PASSWORD) {
         password
     } else {
         String::new()
@@ -208,25 +238,32 @@ fn get_wifi_settings(nvs: &mut NvsWifiHelper) -> Option<AutoSetupSettings> {
     wifi_setup
 }
 
-pub fn clear_wifi(nvs: &mut NvsWifiHelper) -> core::result::Result<(), WmError> {
-    nvs.delete(NAMESPACE_WIFI, KEY_SSID)?;
-    nvs.delete(NAMESPACE_WIFI, KEY_PASSWORD)?;
+pub fn clear_wifi(
+    nvs: &mut esp_nvs::Nvs<'static, EspFlash<'static>>,
+) -> core::result::Result<(), WmError> {
+    nvs.delete(NAMESPACE_WIFI, KEY_SSID)
+        .map_err(|e| WmError::NvsError(e))?;
+    nvs.delete(NAMESPACE_WIFI, KEY_PASSWORD)
+        .map_err(|e| WmError::NvsError(e))?;
     Ok(())
 }
 async fn wifi_connection_worker(
     settings: WmSettings,
     wm_signals: Rc<WmInnerSignals>,
-    nvs: &mut NvsWifiHelper,
+    nvs: &mut esp_nvs::Nvs<'static, EspFlash<'static>>,
     controller: &mut WifiController<'static>,
     mut configuration: esp_radio::wifi::ModeConfig,
 ) -> Result<AutoSetupSettings> {
     let start_time = Instant::now();
     let mut last_scan = Instant::MIN;
+    log::info!(
+        "Waiting for config wifi 。。。The system will be restarted in {:?} milliseconds.",
+        settings.esp_reset_timeout
+    );
     loop {
         if wm_signals.wifi_conn_info_sig.signaled() {
-            let setup_info_buf = wm_signals.wifi_conn_info_sig.wait().await;
+            let setup_info = wm_signals.wifi_conn_info_sig.wait().await;
 
-            let setup_info: AutoSetupSettings = serde_json::from_slice(&setup_info_buf)?;
             log::info!("recived http post,trying to connect to: {setup_info:?}");
             #[cfg(feature = "ap")]
             {
@@ -256,15 +293,16 @@ async fn wifi_connection_worker(
 
             if wifi_connected {
                 log::info!("Wifi connected to: {setup_info:?}");
-                nvs.set_str(NAMESPACE_WIFI, KEY_SSID, setup_info.ssid.as_str())?;
-                nvs.set_str(NAMESPACE_WIFI, KEY_PASSWORD, setup_info.psk.as_str())?;
+                nvs.set(NAMESPACE_WIFI, KEY_SSID, setup_info.ssid.as_str())
+                    .map_err(|e| WmError::NvsError(e))?;
+                nvs.set(NAMESPACE_WIFI, KEY_PASSWORD, setup_info.psk.as_str())
+                    .map_err(|e| WmError::NvsError(e))?;
                 log::info!("Wifi password saved to nvs");
 
                 #[cfg(feature = "ap")]
                 esp_hal_dhcp_server::dhcp_close();
 
                 Timer::after_millis(1000).await;
-
                 wm_signals.signal_end();
                 return Ok(setup_info);
             }

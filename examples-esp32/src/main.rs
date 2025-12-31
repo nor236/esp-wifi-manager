@@ -33,34 +33,17 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 98768);
+    //esp32 max heap size: 98768， else region `dram2_seg' overflowed by 200 bytes␍
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 96 * 1024);
+    esp_alloc::heap_allocator!(size: 36 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
-    let rng = esp_hal::rng::Rng::new();
-    let mut nvs = esp_wifi_manager::NvsWifiHelper::new(peripherals.FLASH);
 
-    let mut wm_settings = esp_wifi_manager::WmSettings::default();
+    let mut nvs = esp_wifi_manager::nvs::new_nvs(peripherals.FLASH).unwrap();
+    // esp_wifi_manager::clear_wifi(&mut nvs).unwrap();
 
-    wm_settings.ssid.clear();
-    _ = core::fmt::write(
-        &mut wm_settings.ssid,
-        format_args!("ESP-{:X}", esp_wifi_manager::get_efuse_mac()),
-    );
-
-    wm_settings.wifi_conn_timeout = 30000;
-    wm_settings.esp_reset_timeout = Some(300000); // 5min
-
-    let wifi_res = esp_wifi_manager::init_wm(
-        wm_settings,
-        &spawner,
-        &mut nvs,
-        rng.clone(),
-        peripherals.WIFI,
-        peripherals.BT,
-        None,
-    )
-    .await;
+    let wifi_res = esp_wifi_manager::start_wifi(&spawner, &mut nvs, peripherals.WIFI).await;
 
     log::info!("wifi_res: {wifi_res:?}");
 
@@ -68,6 +51,4 @@ async fn main(spawner: Spawner) -> ! {
         info!("Hello world!");
         Timer::after(Duration::from_secs(1)).await;
     }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v~1.0/examples
 }

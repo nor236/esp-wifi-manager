@@ -1,128 +1,34 @@
-use crate::structs::WmInnerSignals;
-use alloc::{rc::Rc, vec::Vec};
+use crate::{http_server::start_http_server, structs::WmInnerSignals};
+use alloc::rc::Rc;
 use embassy_executor::Spawner;
 use embassy_net::Stack;
-use embassy_time::Duration;
-use picoserve::{
-    extract::{FromRequest, State},
-    routing::{get, get_service, post, PathRouter},
-    serve_with_state, AppRouter, AppWithStateBuilder, Config, Router,
-};
 
-const WEB_TASK_POOL_SIZE: usize = 2;
-
-#[derive(Clone)]
-struct AppState {
-    signals: Rc<WmInnerSignals>,
-}
-
-struct AppProps {
-    wifi_panel_str: &'static str,
-}
-
-struct Bytes(Vec<u8>);
-impl<'r, State> FromRequest<'r, State> for Bytes {
-    type Rejection = ();
-
-    async fn from_request<R: picoserve::io::Read>(
-        _state: &'r State,
-        _request_parts: picoserve::request::RequestParts<'r>,
-        request_body: picoserve::request::RequestBody<'r, R>,
-    ) -> Result<Self, Self::Rejection> {
-        Ok(Bytes(
-            request_body.read_all().await.map_err(|_| ())?.to_vec(),
-        ))
-    }
-}
-
-impl AppWithStateBuilder for AppProps {
-    type State = AppState;
-    type PathRouter = impl picoserve::routing::PathRouter<AppState>;
-
-    fn build_app(self) -> picoserve::Router<Self::PathRouter, Self::State> {
-        picoserve::Router::new()
-            .route(
-                "/",
-                get_service(picoserve::response::File::html(self.wifi_panel_str)),
-            )
-            .route(
-                "/list",
-                get(|State(app_state): State<AppState>| async move {
-                    let resp_res = app_state.signals.wifi_scan_res.try_lock();
-                    let resp = match resp_res {
-                        Ok(ref resp) => resp.as_str(),
-                        Err(_) => "",
-                    };
-
-                    alloc::string::ToString::to_string(&resp)
-                }),
-            )
-            .route(
-                "/setup",
-                post(
-                    |State(app_state): State<AppState>, Bytes(bytes): Bytes| async move {
-                        app_state.signals.wifi_conn_info_sig.signal(bytes);
-                        //let wifi_connected = app_state.signals.wifi_conn_res_sig.wait().await;
-                        alloc::format!(".")
-                    },
-                ),
-            )
-    }
-}
-
-#[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
-async fn  web_task(
-    id: usize,
-    stack: embassy_net::Stack<'static>,
-    app: &'static AppRouter<AppProps>,
-    config: &'static picoserve::Config<Duration>,
-    signals: Rc<WmInnerSignals>,
-) {
-    let port = 80;
-    let mut tcp_rx_buffer = alloc::vec![0; 1024];
-    let mut tcp_tx_buffer = alloc::vec![0; 1024];
-    let mut http_buffer = alloc::vec![0; 2048];
-
-    let state = AppState {
-        signals: signals.clone(),
-    };
-
-    let fut = picoserve::listen_and_serve_with_state(
-        id,
-        app,
-        config,
-        stack,
-        port,
-        &mut tcp_rx_buffer,
-        &mut tcp_tx_buffer,
-        &mut http_buffer,
-        &state,
-    );
-
-    embassy_futures::select::select(fut, signals.end_signalled()).await;
-}
+// #[embassy_executor::task(pool_size = WEB_TASK_POOL_SIZE)]
+// async fn web_task(stack: embassy_net::Stack<'static>, signals: Rc<WmInnerSignals>) {
+//     let gw_ip_addr_str = "192.168.4.1";
+//     start_http_server(stack, signals, gw_ip_addr_str).await;
+// }
 
 pub async fn run_http_server(
     spawner: &Spawner,
     ap_stack: Stack<'static>,
     signals: Rc<WmInnerSignals>,
-    wifi_panel_str: &'static str,
 ) {
-    let app = AppProps { wifi_panel_str };
-    let app = picoserve::make_static!(AppRouter<AppProps>, app.build_app());
+    // loop {
+    //     if ap_stack.is_link_up() {
+    //         log::info!("AP link up");
+    //         break;
+    //     }
+    //     Timer::after(Duration::from_millis(500)).await;
+    //     log::info!("AP link not up");
+    // }
+    // // let port = 80;
 
-    let config = picoserve::make_static!(
-        picoserve::Config<Duration>,
-        picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: Some(Duration::from_secs(1)),
-            persistent_start_read_request: Some(Duration::from_secs(1)),
-            read_request: Some(Duration::from_secs(1)),
-            write: Some(Duration::from_secs(1)),
-        })
-        .keep_connection_alive()
-    );
-
-    for id in 0..WEB_TASK_POOL_SIZE {
-        spawner.must_spawn(web_task(id, ap_stack, app, config, signals.clone()));
-    }
+    // while !ap_stack.is_config_up() {
+    //     Timer::after(Duration::from_millis(100)).await
+    // }
+    ap_stack
+        .config_v4()
+        .inspect(|c| log::info!("ipv4 config: {c:?}"));
+    spawner.must_spawn(start_http_server(ap_stack, signals));
 }

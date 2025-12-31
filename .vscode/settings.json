@@ -1,5 +1,7 @@
 {
     "rust-analyzer.cargo.target": "riscv32imc-unknown-none-elf",
     "rust-analyzer.check.allTargets": false,
+    "trae.tab.enableRename": false,
+    "trae.tab.enableAutoImport": false,
     // "editor.formatOnSave": true
 }

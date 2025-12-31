@@ -316,12 +316,13 @@
             event.preventDefault();
             const ssid = document.getElementById("ssid").value;
             const psk = document.getElementById("psk").value;
+            const query_str = "ssid=" + ssid + "&psk=" + psk;
 
             try {
                 let response = await fetch("/setup", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ssid, psk })
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: query_str
                 });
             } catch (error) {
             }
@@ -330,16 +331,15 @@
         const panel = document.querySelector("#panel");
         panel.addEventListener("submit", async (e) => {
             e.preventDefault();
-            let json = JSON.stringify({
-                ssid: document.querySelector("#ssid").value,
-                psk: document.querySelector("#psk").value
-            });
+            const ssid = document.querySelector("#ssid").value;
+            const psk = document.querySelector("#psk").value;
+            const query_str = "ssid=" + ssid + "&psk=" + psk;
             try {
                 connecting = true;
                 let res = await fetch("/setup", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: json
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: query_str
                 });
                 connecting = false;
 
@@ -416,10 +416,10 @@
             }
         }
 
-        if (!connected) {
-            listInterval = setInterval(getApList, 15000);
-            getApList();
-        }
+        // if (!connected) {
+        listInterval = setInterval(getApList, 15000);
+        getApList();
+        // }
     </script>
 </body>
 

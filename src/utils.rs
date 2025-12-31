@@ -1,12 +1,12 @@
 use crate::{structs::WmInnerSignals, Result, WmSettings};
 use alloc::rc::Rc;
+use core::{net::Ipv4Addr, str::FromStr};
 use embassy_executor::Spawner;
 use embassy_net::Stack;
-use embassy_time::{with_timeout, Duration, Timer};
-use esp_radio::wifi::{WifiController, WifiDevice};
-
 #[cfg(feature = "ap")]
 use embassy_net::{Config, Ipv4Cidr, StackResources, StaticConfigV4};
+use embassy_time::{with_timeout, Duration, Timer};
+use esp_radio::wifi::{WifiController, WifiDevice};
 
 #[cfg(feature = "ap")]
 pub async fn spawn_ap(
@@ -16,12 +16,19 @@ pub async fn spawn_ap(
     settings: WmSettings,
     ap_interface: WifiDevice<'static>,
 ) -> Result<()> {
-    let ap_ip = embassy_net::Ipv4Address::new(192, 168, 4, 1);
+    let ap_ip =
+        Ipv4Addr::from_str(settings.gw_ip_addr_str.as_str()).expect("failed to parse gateway ip");
+    // let ap_ip = embassy_net::Ipv4Address::new(192, 168, 4, 1);
     let ap_ip_config = Config::ipv4_static(StaticConfigV4 {
         address: Ipv4Cidr::new(ap_ip, 24),
         gateway: Some(ap_ip),
         dns_servers: Default::default(),
     });
+
+    let mut gw_ip_addr_str = wm_signals.gw_ip_addr_str.lock().await;
+    gw_ip_addr_str.clear();
+    gw_ip_addr_str.push_str(settings.gw_ip_addr_str.as_str());
+    log::info!("AP IP: {}", gw_ip_addr_str);
 
     let (ap_stack, ap_runner) = embassy_net::new(
         ap_interface,
@@ -33,10 +40,12 @@ pub async fn spawn_ap(
         },
         rng.random() as u64,
     );
-
+    log::info!("AP IP: {}", ap_ip);
     spawner.spawn(crate::ap::ap_task(ap_runner, wm_signals.clone()))?;
+    log::info!("dhcp server: {}", ap_ip);
     spawner.spawn(crate::ap::run_dhcp_server(ap_stack))?;
-    crate::http::run_http_server(spawner, ap_stack, wm_signals.clone(), settings.wifi_panel).await;
+    log::info!("http server: {}", ap_ip);
+    crate::http::run_http_server(spawner, ap_stack, wm_signals.clone()).await;
 
     Ok(())
 }

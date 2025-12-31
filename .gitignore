@@ -1,1 +1,12 @@
 target
+.history
+Cargo.lock
+target/
+.history/
+./example-esp32c3/.history/
+./example-esp32c6/.history/
+./example-esp32s3/.history/
+./example-esp32/.history/
+**/Cargo.lock
+**/.history/
+*.lock

@@ -10,7 +10,7 @@
             "name": "probe-rs Test",
             "cwd": "${workspaceFolder}",
             "connectUnderReset": true,
-            "chip": "esp32c3",
+            "chip": "esp32",
             "probe": "COM30",
             "flashingConfig": {
                 "flashingEnabled": true,

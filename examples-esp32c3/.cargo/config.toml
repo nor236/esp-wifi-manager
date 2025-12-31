@@ -1,6 +1,7 @@
 # [target.xtensa-esp32s3-none-elf]
 [target.riscv32imc-unknown-none-elf]
-runner = "espflash flash --monitor"
+runner = "espflash flash --monitor --log-format defmt"
+# runner = "espflash flash --monitor --log-format defmt"
 [target.'cfg(target_arch = "riscv32")']
 rustflags = ["-C", "force-frame-pointers"]
 

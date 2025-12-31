@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_time::Timer;
 use esp_backtrace as _;
@@ -23,56 +24,26 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    esp_alloc::heap_allocator!(size: 150 * 1024);
-    let peripherals = esp_hal::init(esp_hal::Config::default());
-
-    /*
-    let mut rtc = Rtc::new(peripherals.LPWR, None);
-    rtc.rwdt.set_timeout(2.secs());
-    rtc.rwdt.enable();
-    log::info!("RWDT watchdog enabled!");
-    */
-
     esp_println::logger::init_logger_from_env();
-
-    // let timg0 = TimerGroup::new(peripherals.TIMG0);
-    // esp_rtos::start(timg0.timer0, timg0.timer1);
-
+    let peripherals = esp_hal::init(esp_hal::Config::default());
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 36 * 1024);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int =
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    let rng = esp_hal::rng::Rng::new();
-    let mut nvs = esp_wifi_manager::NvsWifiHelper::new(peripherals.FLASH);
+    let mut nvs = esp_wifi_manager::nvs::new_nvs(peripherals.FLASH).unwrap();
+    esp_wifi_manager::clear_wifi(&mut nvs).unwrap();
 
-    let mut wm_settings = esp_wifi_manager::WmSettings::default();
-
-    wm_settings.ssid.clear();
-    _ = core::fmt::write(
-        &mut wm_settings.ssid,
-        format_args!("ESP-{:X}", esp_wifi_manager::get_efuse_mac()),
-    );
-
-    wm_settings.wifi_conn_timeout = 30000;
-    wm_settings.esp_reset_timeout = Some(300000); // 5min
-
-    let wifi_res = esp_wifi_manager::init_wm(
-        wm_settings,
-        &spawner,
-        &mut nvs,
-        rng.clone(),
-        peripherals.WIFI,
-        peripherals.BT,
-        None,
-    )
-    .await;
+    let wifi_res =
+        esp_wifi_manager::start_wifi(&spawner, &mut nvs, peripherals.WIFI, peripherals.BT).await;
 
     log::info!("wifi_res: {wifi_res:?}");
 
     loop {
         //rtc.rwdt.feed();
-        log::info!("bump {}", esp_hal::time::Instant::now());
+        // log::info!("bump {}", esp_hal::time::Instant::now());
         Timer::after_millis(15000).await;
     }
 }

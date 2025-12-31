@@ -21,6 +21,7 @@ esp-radio = { version = "0.17.0", features = [
     "coex",
     "esp-alloc",
 ] }
+
 esp-rtos = { version = "0.2.0", features = [
     "esp32",
     "embassy",
@@ -45,29 +46,15 @@ esp-storage = { version = "0.8.1", features = ["esp32"] }
 embedded-storage = "0.3.1"
 esp-wifi-manager = { path = "../", default-features = false, features = [
     "esp32",
-    "ble",
+    # "ble",
     "ap",
 ] }
-static_cell = { version = "2.1.1", features = ["nightly"] }
+static_cell = { version = "2.1.1" }
 heapless = { version = "0.9.1", default-features = false }
-
-bt-hci = "0.6.0"
-trouble-host = { version = "0.5.0", features = ["gatt"] }
-smoltcp = { version = "0.12.0", default-features = false, features = [
-    "log",
-    "medium-ethernet",
-    "multicast",
-    "proto-dhcpv4",
-    "proto-dns",
-    "proto-ipv4",
-    "socket-dns",
-    "socket-icmp",
-    "socket-raw",
-    "socket-tcp",
-    "socket-udp",
-] }
+ 
 
 critical-section = "1.2.0"
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
